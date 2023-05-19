@@ -1,0 +1,168 @@
+from rootToArray import *
+from smooth import smooth
+import numpy as np
+import scipy as sp
+import scipy.signal as sig
+
+import types
+import uproot_methods.classes.TH1
+import math
+
+fullSpectra = {}
+laserPulses = {}
+beamPulses = {} 
+binWidth = 5
+
+def baseline(spectra, spectrum,binWidth):
+	start = math.ceil(10000 / binWidth)
+	end = math.ceil(20000 / binWidth)
+	return np.average(spectra[spectrum][start:end])
+
+def grabWindowLaser(spectra, pulses, start, end, binWidth):
+
+	for spectrum in range(0,4):
+		minVal = 9e99
+		minId = 0
+		
+		left = math.ceil(10000 / binWidth)
+		print(left)
+		right = math.ceil(20000 / binWidth)
+		print(right)
+		baseline = np.average(spectra[spectrum*7][left:right])
+		print(baseline)
+		for value in range(start,end):
+			if spectra[spectrum*7][value] < minVal:
+				minVal = spectra[spectrum*7][value]
+				minId  = value
+		stop = math.ceil(15000 / binWidth)
+		print(minId)
+		print(stop)
+		pulses[spectrum] = spectra[spectrum*7][minId:stop]
+		pulses[spectrum] = -1 * pulses[spectrum] + baseline
+
+def grabWindowBeam(spectra, pulses, binWidth):
+
+	for spectrum in spectra.keys():
+		begin = math.ceil(10000 / binWidth)
+		end = math.ceil(20000 / binWidth)
+		injection = math.ceil(130000 / binWidth)
+
+		baseline = np.average(spectra[spectrum][begin:end])
+		pulses[spectrum] = spectra[spectrum][injection:]
+		#Remove DC component
+		pulses[spectrum] = -1 * pulses[spectrum] + baseline
+		print(pulses[spectrum])
+
+def grabWindow(spectra, pulses, start, end, binWidth, isLaser):
+	for spectrum in spectra.keys():
+		if(isLaser):
+			minVal = 9e99
+			minId = 0
+		
+			left = math.ceil(8000 / binWidth)
+			right = math.ceil(10000 / binWidth)
+			baseline = np.average(spectra[spectrum][left:right])
+			for value in range(start,end):
+				if spectra[spectrum][value] < minVal:
+					minVal = spectra[spectrum][value]
+					minId  = value
+			stop = math.ceil(10000 / binWidth)
+			pulses[spectrum] = -spectra[spectrum][minId:stop]+baseline
+			x = -20
+			for i in range(550,len(pulses[spectrum])):
+				pulses[spectrum][i] = pulses[spectrum][i]*math.e**x
+				x = x - 1
+			print(pulses[spectrum][550:])
+				
+
+		else:
+			begin = math.ceil(8000 / binWidth)
+			end = math.ceil(10000 / binWidth)
+			injection = math.ceil(125000 / binWidth)
+			baseline = np.average(spectra[spectrum][begin:end])
+			pulses[spectrum] = -spectra[spectrum][injection:]+baseline
+		
+
+print("Type the name of root file (make sure it's in the current directory):")
+fileName = input()
+
+print("Loading traces from input root file...")
+index = 0
+for harp in range (1,5):
+	for fiber in range (1,8):
+		histName = "harp"+str(harp)+"Fiber"+str(fiber)+"_intensity"
+		intensityArray = rootToArray(fileName,histName);
+		fullSpectra[index] = intensityArray
+		index += 1
+
+
+
+#Grab Laser Pulses
+grabWindow(fullSpectra, laserPulses,math.ceil(4000/binWidth),math.ceil(8000/binWidth),binWidth,True)
+
+#Grab Beam Pulses
+grabWindow(fullSpectra, beamPulses,0,0,binWidth,False)
+
+print("Deconvoluting...")
+#Smooth out the traces
+index = 0
+laserIndex = 0
+nsmooth = 15
+for harp in range (1,5):
+	for fiber in range (1,8):
+		laserPulses[laserIndex] = smooth(laserPulses[laserIndex],nsmooth)
+		beamPulses[index] = smooth(beamPulses[index],nsmooth)
+		print("Processing fiber " + str(index+1))
+		#Deconvolution
+		recovered, remainder = sig.deconvolve(beamPulses[index],laserPulses[laserIndex][10:])
+		#Scale up the deconvolved signal to match the original
+		raw = np.average(beamPulses[index])
+		deconvoluted = np.average(recovered)
+		factor = raw / deconvoluted
+
+		beamPulses[index] = recovered * factor
+		#print(len(beamPulses[index]))
+		index += 1
+	laserIndex += 1
+
+#############
+#IN PROGRESS#
+#############
+
+file = uproot.recreate("Deconvoluted_" + fileName,compression=uproot.ZLIB(4))
+
+#file["normalized"] = np.histogram(a=np.array(beamPulses[21]),bins=np.arange(0,140000,0.1))
+
+
+print("Writing Histograms To File...")
+class MyTH1(uproot_methods.classes.TH1.Methods,list):
+	def __init__(self, low, high, values, title=""):
+		self._fXaxis = types.SimpleNamespace()
+		self._fXaxis._fNbins = len(values)
+		self._fXaxis._fXmin = low
+		self._fXaxis._fXmax = high
+		for x in values:
+			self.append(float(x))
+		self._fTitle = title
+		self._classname = "TH1F"
+
+index = 0
+for harp in range(1,5):
+	for fiber in range(1,8):
+		histogram = MyTH1(0,len(beamPulses[index])*binWidth,beamPulses[index])
+		#print(len(beamPulses[index]) )
+		name = "harp" + str(harp) + "Fiber" + str(fiber) +"_intensity"
+		file[name] = histogram
+		index += 1
+
+
+#Write to a txt file for testing
+#outFile = open("beamTrace.txt","a")
+#for value in beamPulses[0]:
+#	outFile.write(str(value)+"\n");
+#outFile.close()
+
+#outFile1 = open("laserTrace.txt","a")
+#for value in laserPulses[0]:
+#	outFile1.write(str(value)+"\n");
+#outFile1.close()

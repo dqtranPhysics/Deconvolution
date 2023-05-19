@@ -1,0 +1,42 @@
+void Rebin(char* inRootFileName_) {
+
+	TFile *fileIn = new TFile( inRootFileName_, "READ" );
+
+    	// Define histograms to retrieve fibers intensity 
+    	TH1D* h_fiberIntensity_[4][7];
+    	TH1D* h_fiberIntensityClone_[4][7];
+
+    	// Retrieve the fibers intensity histograms
+    	for ( int iHarp = 1; iHarp <=4; ++iHarp ) {
+        	for ( int iFiber = 1; iFiber <=7; ++iFiber ) {
+            		TString histoName;
+            		histoName = Form( "fiberHarpOffline/harp%dFiber%d_intensity", iHarp, iFiber );
+            		h_fiberIntensity_[iHarp-1][iFiber-1] = (TH1D*) fileIn -> Get(histoName);
+         
+        	}
+    	}
+
+        for ( int iHarp = 1; iHarp <=4; ++iHarp ) {
+            for ( int iFiber = 1; iFiber <=7; ++iFiber ) {
+                h_fiberIntensity_[iHarp-1][iFiber-1] -> Rebin( 2 );
+		h_fiberIntensity_[iHarp-1][iFiber-1] -> Scale(1/2.);
+            }
+        }
+
+	// Save histograms to ROOT file
+    	TFile *fileOut = new TFile( Form("Rebinned_%s",inRootFileName_), "RECREATE" );
+
+	fileOut->mkdir("fiberHarpOffline/");
+	fileOut->cd("fiberHarpOffline/");
+	//fileOut->SetDirectory(gDirectory);
+
+    	for ( int iHarp = 1; iHarp <=4; ++iHarp ) {
+        	for ( int iFiber = 1; iFiber <= 7; ++iFiber ) {
+            		h_fiberIntensity_[iHarp-1][iFiber-1]    -> Write();
+		}
+    	}
+
+    	fileOut -> Close();
+    	fileIn  -> Close();
+
+}
